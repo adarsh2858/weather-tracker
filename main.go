@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
-type apiConfig struct {
+type apiConfigData struct {
 	OpenWeatherMapAppID string `json:"open_weather_map_app_id"`
 }
 
@@ -22,12 +23,24 @@ func hello(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello from go!\n"))
 }
 
-func loadApiConfig() apiConfig {
-	return apiConfig{}
+func loadApiConfig(filename string) (apiConfigData, error) {
+	bytes, err := os.ReadFile(filename)
+	if err != nil {
+		return apiConfigData{}, err
+	}
+
+	var c apiConfigData
+	if err := json.Unmarshal(bytes, &c); err != nil {
+		return apiConfigData{}, err
+	}
+	return c, nil
 }
 
 func query(city string) (weatherData, error) {
-	apiConfig := loadApiConfig()
+	apiConfig, err := loadApiConfig(".apiConfig")
+	if err != nil {
+		return weatherData{}, err
+	}
 
 	resp, err := http.Get("http://openweathermap.com/temp?APPID=" + apiConfig.OpenWeatherMapAppID + "&q=" + city)
 	if err != nil {
@@ -36,18 +49,26 @@ func query(city string) (weatherData, error) {
 	defer resp.Body.Close()
 
 	var d weatherData
-	json.NewDecoder(resp.Body).Decode(&d)
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return weatherData{}, err
+	}
 
-	return weatherData{}, nil
+	return d, nil
 }
 
 func main() {
 	http.HandleFunc("/hello", hello)
 	http.HandleFunc("/weather/", func(w http.ResponseWriter, r *http.Request) {
 		city := strings.SplitN(r.URL.Path, "/", 3)[2]
-		_, _ = query(city)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Header().Set("Content-Type", "application/json")
+
+		data, err := query(city)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(data)
 	})
 
 	log.Fatal(http.ListenAndServe("localhost:8080", nil))
